@@ -61,7 +61,8 @@ func main() {
 	handleError(err)
 
 	// Check response status code
-	if resp.StatusCode != http.StatusOK {
+	// 200 <= resp.StatusCode < 400
+	if !(http.StatusOK <= resp.StatusCode && resp.StatusCode < http.StatusBadRequest) {
 		handleFeedlyError(resp)
 	}
 
@@ -78,9 +79,21 @@ func handleFeedlyError(resp *http.Response) {
 	var e feedlyErrorResponse
 	handleError(json.NewDecoder(resp.Body).Decode(&e))
 
-	// Read timestamp if any
+	// Extract numbers in error message
 	var re = regexp.MustCompile(`\d+`)
 	t := re.FindAllString(e.ErrorMessage, -1)
+
+	// Handle 429 Rate Limit errors
+	if resp.StatusCode == http.StatusTooManyRequests {
+		// t[1] is the reset time
+		resetInSecondes, err := time.ParseDuration(t[1] + "s")
+		handleError(err)
+
+		e.ParsedErrorResponse = fmt.Sprintf("Rate limit reached. Will be reset in %s", resetInSecondes.String())
+		goto Return
+	}
+
+	// Handle generic errors
 	if len(t) >= 2 {
 		// t[0] is expired date as timestape
 		// t[1] is the number of secondes since expiration
@@ -93,6 +106,7 @@ func handleFeedlyError(resp *http.Response) {
 		e.ParsedErrorResponse = fmt.Sprintf("Token expired since the %s (%s)", expiredDate.Format(time.RFC822), secs.String())
 	}
 
+Return:
 	handleError(e)
 }
 
